@@ -85,22 +85,38 @@ def get_coverage_zone(altitude_km: float, min_elevation_deg: float = 10.0) -> di
 @mcp.tool()
 async def analyze_satellite(norad_id: int) -> dict:
     """Full AI-enhanced satellite health analysis: fetches live position, computes
-    physically-grounded risk signals, and produces a Granite/watsonx-generated
-    (or local fallback) plain-language status explanation.
+    physically-grounded risk signals, fetches live space weather, and produces a
+    Granite/watsonx-generated (or local fallback) plain-language status explanation
+    that relates current space weather conditions to this specific satellite.
 
     Args:
         norad_id: NORAD catalog number
     """
-    tle = await sat.fetch_tle_by_norad_id(norad_id)
+    import asyncio as _asyncio
+    tle_coro = sat.fetch_tle_by_norad_id(norad_id)
+    weather_coro = sw.get_enriched_space_weather()
+    tle, weather = await _asyncio.gather(tle_coro, weather_coro, return_exceptions=True)
+
+    if isinstance(tle, Exception):
+        raise tle
+    # Space weather failure is non-fatal — analysis continues without it
+    if isinstance(weather, Exception):
+        weather = None
+
     position = sat.propagate(tle)
     health = sat.health_signals(position)
     coverage = sat.coverage_footprint(position["altitude_km"])
-    ai_result = await ai_analysis.analyze(position["name"], health)
+    ai_result = await ai_analysis.analyze(
+        position["name"], health,
+        space_weather=weather,
+        altitude_km=position["altitude_km"],
+    )
 
     return {
         "position": position,
         "health_signals": health,
         "coverage": coverage,
+        "space_weather": weather,
         "ai_analysis": ai_result,
     }
 
