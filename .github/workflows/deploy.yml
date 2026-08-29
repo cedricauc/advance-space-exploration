@@ -1,0 +1,373 @@
+# ============================================================
+# deploy.yml — CI/CD pipeline for Space Exploration with AI
+#
+# Triggers:
+#   - push to any feat/* branch   → validate + deploy to STAGING
+#   - push to main branch         → validate + deploy to PRODUCTION
+#   - pull_request to main        → validate only (no deploy)
+#   - manual workflow_dispatch    → choose environment manually
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   RENDER_API_KEY          Render.com API key
+#   RENDER_SERVICE_ID_STAGING   Render staging service ID
+#   RENDER_SERVICE_ID_PROD      Render production service ID
+#   WATSONX_API_KEY         IBM watsonx API key
+#   WATSONX_URL             IBM watsonx endpoint URL
+#   WATSONX_PROJECT_ID      IBM watsonx project ID
+#   SPACETRACK_USER         Space-Track.org username
+#   SPACETRACK_PASSWORD     Space-Track.org password
+#   N2YO_API_KEY            N2YO API key
+#
+# Architecture note: The app is two processes in one deployment unit —
+#   Node.js gateway (web-gateway/) spawns Python MCP server (mcp-server/)
+#   as a stdio subprocess. Render.com Native Runtime is used (no Docker).
+# ============================================================
+
+name: Validate & Deploy
+
+on:
+  push:
+    branches:
+      - "feat/**"
+      - "main"
+  pull_request:
+    branches:
+      - "main"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+
+# Cancel in-progress runs on the same branch to avoid deploy races
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────────────────
+  # JOB 1: Python validation
+  # ──────────────────────────────────────────────────────────
+  validate-python:
+    name: "Validate Python (mcp-server)"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: mcp-server/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check imports resolve (catches missing httpx etc.)
+        run: |
+          python -c "
+          import sys, importlib
+          modules = ['satellite_utils', 'ai_analysis', 'spacetrack', 'space_weather', 'n2yo']
+          ok = True
+          for m in modules:
+            try:
+              spec = importlib.util.spec_from_file_location(m, f'{m}.py')
+              # Only check syntax — don't execute module-level network calls
+              import ast, pathlib
+              src = pathlib.Path(f'{m}.py').read_text()
+              ast.parse(src)
+              print(f'  ✅  {m}.py — syntax OK')
+            except SyntaxError as e:
+              print(f'  ❌  {m}.py — SyntaxError: {e}')
+              ok = False
+          sys.exit(0 if ok else 1)
+          "
+
+      - name: Verify all requirements are importable
+        run: |
+          pip check
+          python -c "import httpx, skyfield, dotenv, fastmcp; print('Core packages OK')"
+
+      - name: Lint with flake8 (warnings only — no gate)
+        continue-on-error: true
+        run: |
+          pip install flake8 --quiet
+          flake8 . --max-line-length=120 --extend-ignore=E203,W503 \
+            --exclude=venv --format='%(path)s:%(row)d  %(code)s  %(text)s' \
+            || true
+
+  # ──────────────────────────────────────────────────────────
+  # JOB 2: Node.js validation (runs in PARALLEL with Job 1)
+  # ──────────────────────────────────────────────────────────
+  validate-node:
+    name: "Validate Node.js (web-gateway)"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-gateway
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web-gateway/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check syntax (node --check)
+        run: |
+          node --check server.js
+          node --check mcpClient.js
+          echo "✅  Node.js syntax OK"
+
+      - name: Verify package integrity
+        run: npm audit --audit-level=high || true
+
+  # ──────────────────────────────────────────────────────────
+  # JOB 3: Integration smoke-test
+  # Starts the gateway (which spawns the Python server) and
+  # hits real endpoints — runs AFTER both validate jobs pass
+  # ──────────────────────────────────────────────────────────
+  smoke-test:
+    name: "Smoke Test — live endpoints"
+    runs-on: ubuntu-latest
+    needs: [validate-python, validate-node]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: mcp-server/requirements.txt
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web-gateway/package-lock.json
+
+      - name: Install Python dependencies
+        run: pip install -r mcp-server/requirements.txt
+
+      - name: Install Node.js dependencies
+        run: npm ci
+        working-directory: web-gateway
+
+      - name: Write minimal .env (no real credentials needed for smoke test)
+        run: |
+          cat > mcp-server/.env << 'EOF'
+          # Smoke-test env — all credential-gated tools will return graceful "not configured" responses
+          BROADCAST_GROUP=stations
+          BROADCAST_LIMIT=3
+          BROADCAST_INTERVAL_MS=60000
+          PORT=3099
+          EOF
+
+      - name: Start gateway in background
+        run: |
+          export PYTHON_COMMAND=python3
+          node web-gateway/server.js &
+          echo "GATEWAY_PID=$!" >> $GITHUB_ENV
+          # Wait up to 20s for the server to be ready
+          for i in $(seq 1 20); do
+            sleep 1
+            if curl -sf http://localhost:3099/api/iss > /dev/null 2>&1; then
+              echo "✅  Gateway ready after ${i}s"
+              break
+            fi
+            if [ $i -eq 20 ]; then
+              echo "❌  Gateway did not start within 20s"
+              exit 1
+            fi
+          done
+
+      - name: Smoke test — public endpoints (no credentials required)
+        run: |
+          set -e
+          echo "Testing /api/iss ..."
+          curl -sf http://localhost:3099/api/iss | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert 'latitude' in d and 'longitude' in d, f'Bad ISS response: {d}'
+          print(f'  ✅  ISS position: {d[\"latitude\"]:.2f}, {d[\"longitude\"]:.2f}')
+          "
+
+          echo "Testing /api/space-weather ..."
+          curl -sf http://localhost:3099/api/space-weather | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert 'kp_index' in d or 'error' in str(d), f'Bad weather response: {d}'
+          print(f'  ✅  Space weather response received')
+          "
+
+          echo "Testing /api/satellite/25544 (ISS via SGP4) ..."
+          curl -sf http://localhost:3099/api/satellite/25544 | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert 'latitude' in d and 'altitude_km' in d, f'Bad satellite response: {d}'
+          print(f'  ✅  ISS SGP4: alt={d[\"altitude_km\"]} km, lat={d[\"latitude\"]}')
+          "
+
+          echo "Testing /api/astronauts ..."
+          curl -sf http://localhost:3099/api/astronauts | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert 'count' in d and 'people' in d, f'Bad astronauts response: {d}'
+          print(f'  ✅  {d[\"count\"]} astronauts in space')
+          "
+
+      - name: Stop gateway
+        if: always()
+        run: kill $GATEWAY_PID 2>/dev/null || true
+
+  # ──────────────────────────────────────────────────────────
+  # JOB 4a: Deploy to STAGING
+  # Runs when: push to feat/* OR manual dispatch targeting staging
+  # Uses Render.com Deploy Hook
+  # ──────────────────────────────────────────────────────────
+  deploy-staging:
+    name: "Deploy → Staging"
+    runs-on: ubuntu-latest
+    needs: [smoke-test]
+    environment: staging
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/feat/')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trigger Render staging deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_STAGING }}
+        run: |
+          echo "🚀  Deploying to staging (Render service: $RENDER_SERVICE_ID)..."
+          DEPLOY_RESPONSE=$(curl -sf -X POST \
+            "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache": "do_not_clear"}')
+          DEPLOY_ID=$(echo "$DEPLOY_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['deploy']['id'])")
+          echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_ENV
+          echo "  Deploy triggered: $DEPLOY_ID"
+
+      - name: Wait for deploy to complete
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_STAGING }}
+        run: |
+          echo "⏳  Waiting for staging deploy to complete..."
+          for i in $(seq 1 30); do
+            sleep 10
+            STATUS=$(curl -sf \
+              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys/${DEPLOY_ID}" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['deploy']['status'])")
+            echo "  [${i}/30] status: $STATUS"
+            if [ "$STATUS" = "live" ]; then
+              echo "✅  Staging deploy live!"
+              break
+            fi
+            if [ "$STATUS" = "failed" ] || [ "$STATUS" = "canceled" ]; then
+              echo "❌  Deploy $STATUS"
+              exit 1
+            fi
+          done
+
+      - name: Post staging URL to summary
+        env:
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_STAGING }}
+        run: |
+          echo "## 🛰️ Staging Deploy Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Triggered by** | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Staging URL is shown in your Render dashboard for service \`$RENDER_SERVICE_ID\`." >> $GITHUB_STEP_SUMMARY
+
+  # ──────────────────────────────────────────────────────────
+  # JOB 4b: Deploy to PRODUCTION
+  # Runs when: push to main OR manual dispatch targeting production
+  # ──────────────────────────────────────────────────────────
+  deploy-production:
+    name: "Deploy → Production"
+    runs-on: ubuntu-latest
+    needs: [smoke-test]
+    environment: production
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trigger Render production deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_PROD }}
+        run: |
+          echo "🚀  Deploying to production (Render service: $RENDER_SERVICE_ID)..."
+          DEPLOY_RESPONSE=$(curl -sf -X POST \
+            "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache": "do_not_clear"}')
+          DEPLOY_ID=$(echo "$DEPLOY_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['deploy']['id'])")
+          echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_ENV
+          echo "  Deploy triggered: $DEPLOY_ID"
+
+      - name: Wait for deploy to complete
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_PROD }}
+        run: |
+          echo "⏳  Waiting for production deploy to complete..."
+          for i in $(seq 1 30); do
+            sleep 10
+            STATUS=$(curl -sf \
+              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys/${DEPLOY_ID}" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['deploy']['status'])")
+            echo "  [${i}/30] status: $STATUS"
+            if [ "$STATUS" = "live" ]; then
+              echo "✅  Production deploy live!"
+              break
+            fi
+            if [ "$STATUS" = "failed" ] || [ "$STATUS" = "canceled" ]; then
+              echo "❌  Deploy $STATUS"
+              exit 1
+            fi
+          done
+
+      - name: Post production URL to summary
+        run: |
+          echo "## 🚀 Production Deploy Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Triggered by** | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY

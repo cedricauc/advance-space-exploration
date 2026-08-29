@@ -1,0 +1,88 @@
+# render.yaml — Render.com Native Runtime configuration
+#
+# Defines one Web Service that:
+#   1. Installs Python deps (mcp-server)
+#   2. Installs Node.js deps (web-gateway)
+#   3. Starts the Node.js gateway, which spawns the Python MCP server
+#      as a stdio subprocess automatically.
+#
+# Deploy: connect your GitHub repo on https://dashboard.render.com
+# and Render will auto-detect this file.
+#
+# Required environment variables (add in Render dashboard → Environment):
+#   WATSONX_API_KEY, WATSONX_URL, WATSONX_PROJECT_ID
+#   SPACETRACK_USER, SPACETRACK_PASSWORD
+#   N2YO_API_KEY
+# (All are optional — the app runs without them with reduced features)
+
+services:
+  - type: web
+    name: space-explorer-staging
+    runtime: node
+    region: oregon
+    plan: free
+    branch: feat/*
+    buildCommand: >
+      pip3 install -r mcp-server/requirements.txt --target mcp-server/venv-packages &&
+      cd web-gateway && npm ci --omit=dev
+    startCommand: node web-gateway/server.js
+    envVars:
+      - key: PYTHON_COMMAND
+        value: python3
+      - key: NODE_ENV
+        value: production
+      - key: BROADCAST_GROUP
+        value: stations
+      - key: BROADCAST_LIMIT
+        value: "8"
+      - key: BROADCAST_INTERVAL_MS
+        value: "15000"
+      # Credentials — set these in Render dashboard, not here
+      - key: WATSONX_API_KEY
+        sync: false
+      - key: WATSONX_URL
+        sync: false
+      - key: WATSONX_PROJECT_ID
+        sync: false
+      - key: SPACETRACK_USER
+        sync: false
+      - key: SPACETRACK_PASSWORD
+        sync: false
+      - key: N2YO_API_KEY
+        sync: false
+    healthCheckPath: /api/iss
+
+  - type: web
+    name: space-explorer-production
+    runtime: node
+    region: oregon
+    plan: starter
+    branch: main
+    buildCommand: >
+      pip3 install -r mcp-server/requirements.txt --target mcp-server/venv-packages &&
+      cd web-gateway && npm ci --omit=dev
+    startCommand: node web-gateway/server.js
+    envVars:
+      - key: PYTHON_COMMAND
+        value: python3
+      - key: NODE_ENV
+        value: production
+      - key: BROADCAST_GROUP
+        value: stations
+      - key: BROADCAST_LIMIT
+        value: "8"
+      - key: BROADCAST_INTERVAL_MS
+        value: "15000"
+      - key: WATSONX_API_KEY
+        sync: false
+      - key: WATSONX_URL
+        sync: false
+      - key: WATSONX_PROJECT_ID
+        sync: false
+      - key: SPACETRACK_USER
+        sync: false
+      - key: SPACETRACK_PASSWORD
+        sync: false
+      - key: N2YO_API_KEY
+        sync: false
+    healthCheckPath: /api/iss

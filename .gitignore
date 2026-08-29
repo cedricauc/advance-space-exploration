@@ -1,12 +1,23 @@
-# Python
+﻿# Python
 mcp-server/venv/
 mcp-server/__pycache__/
 mcp-server/*.pyc
+mcp-server/*.pyo
+**/__pycache__/
 
 # Node
 web-gateway/node_modules/
 web-gateway/.npm/
 web-gateway/.cache/
+
+# Environment / secrets — NEVER commit real credentials
+mcp-server/.env
+.env
+.env.local
+.env.*.local
+
+# Render build artefact (pip --target install used in render.yaml)
+mcp-server/venv-packages/
 
 # OS
 .DS_Store

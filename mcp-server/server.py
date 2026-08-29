@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 # that import, those variables are still None when it needs them.
 load_dotenv()
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 
 import satellite_utils as sat

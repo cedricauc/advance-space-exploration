@@ -29,9 +29,21 @@ async function getClient() {
   if (connecting) return connecting;
 
   connecting = (async () => {
+    // On Render (render.yaml), pip installs to mcp-server/venv-packages/ via --target.
+    // We forward PYTHONPATH so the Python subprocess can find those packages
+    // without a virtual environment. Locally, the venv handles this automatically.
+    const extraEnv = {};
+    const venvPackages = path.resolve(__dirname, "../mcp-server/venv-packages");
+    const { existsSync } = await import("node:fs");
+    if (existsSync(venvPackages)) {
+      const existing = process.env.PYTHONPATH || "";
+      extraEnv.PYTHONPATH = existing ? `${venvPackages}:${existing}` : venvPackages;
+    }
+
     const transport = new StdioClientTransport({
       command: PYTHON_COMMAND,
       args: [SERVER_SCRIPT],
+      env: { ...process.env, ...extraEnv },
     });
 
     const c = new Client({ name: "space-mission-gateway", version: "1.0.0" }, { capabilities: {} });

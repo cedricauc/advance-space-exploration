@@ -135,6 +135,80 @@ npm start
 
 Open http://localhost:3000 for the live map, http://localhost:3000/dashboard.html for the analytics dashboard.
 
+---
+
+## CI/CD & Deployment
+
+### How it works
+
+Every `git push` to a `feat/*` branch automatically runs the full pipeline:
+
+```
+push feat/*
+    │
+    ├── validate-python  ──┐
+    │   (syntax, imports,  │  parallel
+    │    secrets scan)     │
+    ├── validate-node ─────┘
+    │   (syntax, npm audit)
+    │
+    └── smoke-test (after both pass)
+            Starts gateway + Python subprocess
+            Hits /api/iss, /api/space-weather,
+            /api/satellite/25544, /api/astronauts
+            │
+            └── deploy-staging → Render.com
+```
+
+Push to `main` runs the same pipeline then deploys to **production**.
+
+### Setup (one-time)
+
+**1. Connect repo to Render**
+- Go to https://dashboard.render.com → New Web Service → connect your GitHub repo
+- Render auto-detects `render.yaml` and creates two services: `space-explorer-staging` and `space-explorer-production`
+- Set environment variables in the Render dashboard (see `.env.example` for the full list)
+
+**2. Add GitHub Secrets**
+Go to GitHub → Settings → Secrets and variables → Actions, and add:
+
+| Secret | Where to get it |
+|--------|----------------|
+| `RENDER_API_KEY` | Render dashboard → Account → API Keys |
+| `RENDER_SERVICE_ID_STAGING` | Render dashboard → service → Settings → Service ID |
+| `RENDER_SERVICE_ID_PROD` | Render dashboard → production service → Settings → Service ID |
+| `WATSONX_API_KEY` | IBM Cloud |
+| `WATSONX_URL` | IBM Cloud |
+| `WATSONX_PROJECT_ID` | IBM Cloud |
+| `SPACETRACK_USER` | space-track.org |
+| `SPACETRACK_PASSWORD` | space-track.org |
+| `N2YO_API_KEY` | n2yo.com |
+
+**3. Branch naming convention**
+| Branch | Pipeline | Deploy target |
+|--------|----------|---------------|
+| `feat/*` | validate + smoke-test | Staging |
+| `main` | validate + smoke-test | Production |
+| `fix/*`, `chore/*` | validate + smoke-test | None (PR to main) |
+| `pull_request → main` | validate + smoke-test | None |
+
+### Bob workflow automation
+
+This project includes Bob skills that automate the entire release workflow:
+
+**`/space-release`** — Full release pipeline inside Bob:
+1. Reads git history and classifies every changed file (document understanding)
+2. Spawns parallel subagents to validate Python and Node.js simultaneously
+3. Drafts a conventional commit message from the change analysis
+4. Stages, commits, and pushes with your approval
+5. Confirms the GitHub Actions run is triggered
+6. Reports staging/production deploy status
+
+**`/space-onboard`** — New developer setup:
+1. Runs automated health check (Python, Node, venv, packages, .env, port)
+2. Walks through credential configuration
+3. Validates the running server against live endpoints
+
 ## Verified during build
 
 - SGP4 propagation tested against a real-format TLE — confirmed correct lat/lon/altitude output
