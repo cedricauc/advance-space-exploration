@@ -1,0 +1,13 @@
+# Python
+mcp-server/venv/
+mcp-server/__pycache__/
+mcp-server/*.pyc
+
+# Node
+web-gateway/node_modules/
+web-gateway/.npm/
+web-gateway/.cache/
+
+# OS
+.DS_Store
+Thumbs.db

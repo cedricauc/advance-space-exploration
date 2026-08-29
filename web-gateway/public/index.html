@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>3D Satellite Tracking — Space Mission Intelligence</title>
+  <link rel="stylesheet" href="/css/style.css" />
+
+  <!--
+    Import map: resolves the bare "three" specifier used internally by
+    OrbitControls.js (a three.js addon that does `import {...} from 'three'`,
+    which only works in a browser without a bundler if an import map tells
+    it where "three" actually points to). Both files are self-hosted from
+    the real npm packages — see /vendor/ — not loaded from any CDN, after
+    three separate CDN strategies each failed for different reasons on an
+    earlier attempt (see globe3d.js header comment for the full story).
+  -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/vendor/three.module.min.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>🛰️ Space Mission Intelligence</h1>
+    <nav>
+      <a href="/" class="active">Live 3D Tracking</a>
+      <a href="/dashboard.html">Dashboard</a>
+    </nav>
+    <span id="status-pill">connecting…</span>
+  </header>
+
+  <div class="panel controls-panel map-controls">
+    <div class="controls-row">
+      <label>
+        Group
+        <select id="groupSelect">
+          <option value="stations">Space Stations (ISS, Tiangong)</option>
+          <option value="starlink">Starlink</option>
+          <option value="gps-ops">GPS Operational</option>
+          <option value="weather">Weather</option>
+          <option value="geo">Geostationary</option>
+          <option value="active">Active satellites (large set)</option>
+          <option value="oneweb">OneWeb</option>
+          <option value="galileo">Galileo</option>
+          <option value="__custom">Custom group name…</option>
+        </select>
+      </label>
+      <label id="customGroupLabel" style="display:none;">
+        Custom group
+        <input type="text" id="customGroupInput" placeholder="e.g. iridium-NEXT" />
+      </label>
+      <label>
+        Limit
+        <input type="number" id="limitInput" min="1" max="12000" value="8" />
+      </label>
+      <button id="applyBtn">Apply</button>
+    </div>
+  </div>
+
+  <div class="globe3d-layout">
+    <div id="globe3dContainer"></div>
+
+    <aside id="infoPanel" class="info-panel hidden">
+      <button id="infoPanelClose" class="info-panel-close" aria-label="Close">×</button>
+      <div id="infoPanelContent"></div>
+    </aside>
+  </div>
+
+  <script type="module" src="/js/globe3d.js"></script>
+</body>
+</html>

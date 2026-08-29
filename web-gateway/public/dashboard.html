@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Daily Analytics Dashboard — Space Mission Intelligence</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header>
+    <h1>🛰️ Space Mission Intelligence</h1>
+    <nav>
+      <a href="/">Live 3D Tracking</a>
+      <a href="/dashboard.html" class="active">Dashboard</a>
+    </nav>
+    <span id="status-pill">loading…</span>
+  </header>
+
+  <main class="dashboard">
+    <div class="panel controls-panel">
+      <h2>Constellation selection</h2>
+      <div class="controls-row">
+        <label>
+          Group
+          <select id="groupSelect">
+            <option value="stations">Space Stations (ISS, Tiangong)</option>
+            <option value="starlink">Starlink</option>
+            <option value="gps-ops">GPS Operational</option>
+            <option value="weather">Weather</option>
+            <option value="geo">Geostationary</option>
+            <option value="active">Active satellites (large set)</option>
+            <option value="oneweb">OneWeb</option>
+            <option value="galileo">Galileo</option>
+            <option value="__custom">Custom group name…</option>
+          </select>
+        </label>
+        <label id="customGroupLabel" style="display:none;">
+          Custom group
+          <input type="text" id="customGroupInput" placeholder="e.g. iridium-NEXT" />
+        </label>
+        <label>
+          Limit
+          <input type="number" id="limitInput" min="1" max="200" value="12" />
+        </label>
+        <button id="applyBtn">Apply</button>
+      </div>
+      <div class="note">Group names match Celestrak's GP query groups. Larger limits (50+) take slightly longer to load but stay fast thanks to concurrent AI analysis.</div>
+    </div>
+
+    <div class="kpi-row" id="kpi-row">
+      <div class="kpi-card"><div class="value" id="kpi-total">–</div><div class="label">Satellites tracked</div></div>
+      <div class="kpi-card"><div class="value" id="kpi-ok">–</div><div class="label">Status: OK</div></div>
+      <div class="kpi-card"><div class="value" id="kpi-degraded">–</div><div class="label">Status: DEGRADED</div></div>
+      <div class="kpi-card"><div class="value" id="kpi-outage">–</div><div class="label">Status: OUTAGE</div></div>
+      <div class="kpi-card"><div class="value" id="kpi-risk">–</div><div class="label">Avg risk score</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Risk score by satellite</h2>
+      <canvas id="riskChart"></canvas>
+    </div>
+
+    <div class="panel">
+      <h2>Status overview</h2>
+      <table id="statusTable">
+        <thead>
+          <tr><th>Satellite</th><th>Status</th><th>Risk</th><th>Altitude (km)</th><th>Coverage radius (km)</th><th>TLE age (h)</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="note">Region/coverage figures are computed from real orbital geometry (SGP4 + line-of-sight). No proprietary operator telemetry (signal strength, latency, packet loss) is used.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Space weather (NOAA SWPC)</h2>
+      <div id="weatherPanel">loading…</div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>
