@@ -21,7 +21,7 @@ services:
     runtime: node
     region: oregon
     plan: free
-    branch: feat/*
+    branch: dev
     buildCommand: >
       pip3 install -r mcp-server/requirements.txt --target mcp-server/venv-packages &&
       cd web-gateway && npm ci --omit=dev
@@ -58,6 +58,7 @@ services:
     region: oregon
     plan: starter
     branch: main
+    # When ready for a dedicated staging branch, change dev → feat/* above
     buildCommand: >
       pip3 install -r mcp-server/requirements.txt --target mcp-server/venv-packages &&
       cd web-gateway && npm ci --omit=dev

@@ -28,8 +28,9 @@ name: Validate & Deploy
 on:
   push:
     branches:
-      - "feat/**"
+      - "dev"
       - "main"
+      - "feat/**"
   pull_request:
     branches:
       - "main"
@@ -250,7 +251,7 @@ jobs:
     needs: [smoke-test]
     environment: staging
     if: |
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/feat/')) ||
+      (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/feat/') || github.ref == 'refs/heads/dev')) ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
 
     steps:
