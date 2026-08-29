@@ -5,7 +5,7 @@ const customGroupInput = document.getElementById("customGroupInput");
 const limitInput = document.getElementById("limitInput");
 const applyBtn = document.getElementById("applyBtn");
 
-const STORAGE_KEY = "space-dashboard-selection";
+const STORAGE_KEY = "space-selection";
 
 function loadSelection() {
   try {
@@ -21,7 +21,14 @@ function loadSelection() {
 }
 
 function saveSelection(selection) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(selection));
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      group: selection.group === "__custom" ? "__custom" : selection.group,
+      customGroup: selection.customGroup || "",
+      limit: selection.limit,
+    })
+  );
 }
 
 function currentSelection() {
@@ -36,7 +43,7 @@ function currentSelection() {
 
 // Restore last selection on load
 const saved = loadSelection();
-groupSelect.value = saved.customGroup ? "__custom" : saved.group;
+groupSelect.value = saved.group === "__custom" ? "__custom" : saved.group;
 customGroupInput.value = saved.customGroup;
 limitInput.value = saved.limit;
 customGroupLabel.style.display = groupSelect.value === "__custom" ? "flex" : "none";

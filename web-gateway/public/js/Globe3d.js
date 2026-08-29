@@ -38,7 +38,7 @@ const infoPanelContent = document.getElementById("infoPanelContent");
 const infoPanelClose = document.getElementById("infoPanelClose");
 
 // ---- Selection persistence (own storage key — independent of the 2D map page) ----
-const STORAGE_KEY = "space-globe3d-selection";
+const STORAGE_KEY = "space-selection";
 const POLL_INTERVAL_MS = 15000;
 
 function loadSelection() {
@@ -47,15 +47,22 @@ function loadSelection() {
     return {
       group: saved.group || "stations",
       customGroup: saved.customGroup || "",
-      limit: saved.limit || 8,
+      limit: saved.limit || 12,
     };
   } catch {
-    return { group: "stations", customGroup: "", limit: 8 };
+    return { group: "stations", customGroup: "", limit: 12 };
   }
 }
 
 function saveSelection(selection) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(selection));
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      group: selection.group === "__custom" ? "__custom" : selection.group,
+      customGroup: selection.customGroup || "",
+      limit: selection.limit,
+    })
+  );
 }
 
 function currentSelection() {
@@ -68,11 +75,14 @@ function currentSelection() {
   };
 }
 
-const savedSelection = loadSelection();
-groupSelect.value = savedSelection.customGroup ? "__custom" : savedSelection.group;
-customGroupInput.value = savedSelection.customGroup;
-limitInput.value = savedSelection.limit;
-customGroupLabel.style.display = groupSelect.value === "__custom" ? "flex" : "none";
+const saved = loadSelection();
+
+groupSelect.value = saved.group === "__custom" ? "__custom" : saved.group;
+customGroupInput.value = saved.customGroup;
+limitInput.value = saved.limit;
+
+customGroupLabel.style.display =
+  groupSelect.value === "__custom" ? "flex" : "none";
 
 groupSelect.addEventListener("change", () => {
   customGroupLabel.style.display = groupSelect.value === "__custom" ? "flex" : "none";
