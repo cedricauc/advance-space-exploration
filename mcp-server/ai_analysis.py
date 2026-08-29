@@ -56,19 +56,53 @@ def score_and_classify(health: dict) -> dict:
 
 def _local_explanation(name: str, health: dict, verdict: dict) -> str:
     """Honest, template-based explanation — used when watsonx isn't configured."""
-    reasons = []
-    if health["tle_staleness"] != "FRESH":
-        reasons.append(f"tracking data is {health['tle_staleness'].lower()} ({health['tle_age_hours']}h old)")
-    if health["drag_risk_score"] >= 0.5:
-        reasons.append("orbital altitude puts it in a higher atmospheric-drag band")
-    if health["orbit_anomaly_flag"]:
-        reasons.append("orbital eccentricity is outside the typical range for this altitude")
-    if not reasons:
-        reasons.append("all monitored orbital signals are within normal range")
+    staleness = health["tle_staleness"]
+    age_h = health["tle_age_hours"]
+    drag = health["drag_risk_score"]
+    anomaly = health["orbit_anomaly_flag"]
+    status = verdict["status"]
+    risk = verdict["risk_score"]
+
+    # Primary driver
+    if staleness == "STALE":
+        primary = (
+            f"The primary concern is tracking data staleness: the last TLE update was {age_h}h ago, "
+            f"which means ground operators no longer have precise knowledge of its orbit. "
+            f"This alone is sufficient to trigger OUTAGE classification."
+        )
+        action = "Re-establish contact and request a fresh TLE from the tracking network."
+    elif staleness == "AGING":
+        primary = (
+            f"Tracking data is aging ({age_h}h since last update), reducing confidence "
+            f"in the predicted orbit. Continued degradation will escalate to OUTAGE."
+        )
+        action = "Schedule a tracking pass to refresh the TLE within the next 48 hours."
+    elif drag >= 0.6:
+        primary = (
+            f"The satellite is in a high-drag regime (drag risk {drag}). "
+            f"At this altitude atmospheric drag will cause measurable orbit decay without station-keeping."
+        )
+        action = "Review station-keeping fuel budget and plan an orbit maintenance manoeuvre."
+    elif anomaly:
+        primary = (
+            "An orbit anomaly flag is active: the orbital eccentricity is outside the "
+            "near-circular range expected at this altitude, which may indicate a past manoeuvre "
+            "or unmodelled perturbation."
+        )
+        action = "Cross-check the latest TLE against the mission's nominal orbit profile."
+    else:
+        primary = "All monitored orbital signals are within normal range."
+        action = "No immediate action required; continue routine monitoring."
+
+    consequence = {
+        "OUTAGE":   "The satellite should be treated as operationally unavailable until tracking is restored.",
+        "DEGRADED": "Reduced confidence in position knowledge; dependent services should use conservative margins.",
+        "OK":       "The satellite is operating normally; no mission impact.",
+    }.get(status, "")
 
     return (
-        f"{name} is classified {verdict['status']} (risk score {verdict['risk_score']}). "
-        f"Basis: {'; '.join(reasons)}. "
+        f"{name} is classified {status} with a risk score of {risk}/1.0. "
+        f"{primary} {consequence} {action} "
         f"[locally generated — configure WATSONX_API_KEY to route this through Granite]"
     )
 
@@ -88,13 +122,44 @@ async def _watsonx_explanation(name: str, health: dict, verdict: dict) -> str:
         token_resp.raise_for_status()
         access_token = token_resp.json()["access_token"]
 
+        staleness = health["tle_staleness"]
+        age_h = health["tle_age_hours"]
+        drag = health["drag_risk_score"]
+        anomaly = health["orbit_anomaly_flag"]
+        risk = verdict["risk_score"]
+        status = verdict["status"]
+
+        # Build a concise bullet list of what each signal means so Granite
+        # can cite specific numbers rather than producing a generic summary.
+        signal_lines = [
+            f"  - TLE staleness: {staleness} ({age_h}h since last tracking update)"
+            + (" — tracking confidence is LOW; operators may have lost precise knowledge of its orbit" if staleness == "STALE"
+               else " — tracking confidence is REDUCED" if staleness == "AGING"
+               else " — tracking data is current"),
+            f"  - Drag risk score: {drag} (scale 0–1; values ≥0.6 indicate meaningful decay risk)"
+            + (" — LOW drag risk at this altitude" if drag < 0.3
+               else " — MODERATE drag / orbit decay exposure" if drag < 0.6
+               else " — HIGH drag; orbit will decay noticeably without station-keeping"),
+            f"  - Orbit anomaly: {'YES — eccentricity is outside the normal near-circular range for this altitude band' if anomaly else 'NO — orbit shape is normal'}",
+            f"  - Overall risk score: {risk} (0 = healthy, 1 = critical)",
+            f"  - Status classification: {status}",
+        ]
+        signals_block = "\n".join(signal_lines)
+
         prompt = (
-            "You are a spacecraft operations assistant. In two sentences, explain this "
-            f"satellite's status to a non-expert.\n\nSatellite: {name}\n"
-            f"Status: {verdict['status']}\nRisk score: {verdict['risk_score']}\n"
-            f"TLE staleness: {health['tle_staleness']}\n"
-            f"Drag risk score: {health['drag_risk_score']}\n"
-            f"Orbit anomaly flagged: {health['orbit_anomaly_flag']}"
+            "You are a spacecraft operations analyst writing a plain-language status briefing "
+            "for a mission control team. Use ONLY the signals listed below — do NOT invent "
+            "battery levels, power readings, temperature values, transponder states, or any "
+            "telemetry that is not explicitly provided.\n\n"
+            f"Satellite: {name}\n\n"
+            "Measured signals:\n"
+            f"{signals_block}\n\n"
+            "Write a clear, specific 3–4 sentence briefing that:\n"
+            "1. States the current status and what it means operationally.\n"
+            "2. Identifies the single most important contributing factor, citing the actual value.\n"
+            "3. Describes the practical consequence for the satellite's mission or ground operators.\n"
+            "4. Recommends one concrete next action.\n\n"
+            "Briefing:"
         )
 
         gen_resp = await client.post(
@@ -107,7 +172,7 @@ async def _watsonx_explanation(name: str, health: dict, verdict: dict) -> str:
                 "model_id": GRANITE_MODEL_ID,
                 "project_id": WATSONX_PROJECT_ID,
                 "input": prompt,
-                "parameters": {"max_new_tokens": 120, "temperature": 0.3},
+                "parameters": {"max_new_tokens": 220, "temperature": 0.2},
             },
         )
 

@@ -9,14 +9,15 @@ satellite_utils.py — real orbital mechanics, no simulated positions.
 """
 
 from __future__ import annotations
- 
+
 import math
 import os
 import time
-from datetime import datetime, timezone
- 
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
 import httpx
-from skyfield.api import EarthSatellite, load
+from skyfield.api import EarthSatellite, Topos, load
  
 EARTH_RADIUS_KM = 6371.0
 
@@ -175,3 +176,108 @@ def health_signals(position: dict) -> dict:
         "drag_risk_score": drag_risk,
         "orbit_anomaly_flag": orbit_anomaly,
     }
+
+
+async def compute_contact_windows(
+    norad_id: int,
+    ground_stations: list[dict[str, Any]],
+    duration_hours: float = 24,
+    step_seconds: int = 30,
+) -> list[dict]:
+    """Compute upcoming satellite–ground contact windows using SGP4 propagation.
+
+    For each ground station, steps through the next `duration_hours` at
+    `step_seconds` intervals and detects elevation crossings above each
+    station's minimum elevation angle. Returns all windows across all stations,
+    sorted by AOS (Acquisition of Signal) time.
+
+    Args:
+        norad_id:        NORAD catalog number of the target satellite.
+        ground_stations: List of dicts, each with:
+                           name            (str)   — human-readable station label
+                           lat             (float) — latitude in degrees
+                           lon             (float) — longitude in degrees (east positive)
+                           min_elevation_deg (float) — minimum usable elevation angle
+        duration_hours:  How many hours ahead to search (default 24).
+        step_seconds:    Time step in seconds (default 30; smaller = more precise AOS/LOS).
+
+    Returns:
+        List of contact window dicts:
+          station_name, aos_utc, los_utc, max_elevation_deg, duration_seconds
+    """
+    tle = await fetch_tle_by_norad_id(norad_id)
+    sat = EarthSatellite(tle["line1"], tle["line2"], tle["name"], _ts)
+
+    now_dt = datetime.now(timezone.utc)
+    total_steps = int(duration_hours * 3600 / step_seconds)
+
+    # Pre-build the time array for all stations to share
+    t_array = _ts.utc(
+        [now_dt.year] * (total_steps + 1),
+        [now_dt.month] * (total_steps + 1),
+        [now_dt.day] * (total_steps + 1),
+        [now_dt.hour] * (total_steps + 1),
+        [now_dt.minute] * (total_steps + 1),
+        [now_dt.second + i * step_seconds for i in range(total_steps + 1)],
+    )
+
+    windows: list[dict] = []
+
+    for gs in ground_stations:
+        gs_name = gs.get("name", "unknown")
+        gs_lat = float(gs["lat"])
+        gs_lon = float(gs["lon"])
+        min_elev = float(gs.get("min_elevation_deg", 5.0))
+
+        observer = Topos(latitude_degrees=gs_lat, longitude_degrees=gs_lon)
+        difference = sat - observer
+
+        # Compute elevation at every time step
+        topocentric = difference.at(t_array)
+        alt, _az, _dist = topocentric.altaz()
+        elevations = alt.degrees  # numpy array
+
+        in_contact = False
+        contact_start_dt: datetime | None = None
+        contact_max_elev = 0.0
+
+        for i, elev in enumerate(elevations):
+            step_dt = now_dt + timedelta(seconds=i * step_seconds)
+
+            if not in_contact and elev >= min_elev:
+                # Rising edge — AOS
+                in_contact = True
+                contact_start_dt = step_dt
+                contact_max_elev = elev
+            elif in_contact:
+                if elev >= min_elev:
+                    contact_max_elev = max(contact_max_elev, elev)
+                else:
+                    # Setting edge — LOS
+                    los_dt = step_dt
+                    duration_s = int((los_dt - contact_start_dt).total_seconds())
+                    windows.append({
+                        "station_name": gs_name,
+                        "aos_utc": contact_start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "los_utc": los_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "max_elevation_deg": round(float(contact_max_elev), 1),
+                        "duration_seconds": duration_s,
+                    })
+                    in_contact = False
+                    contact_start_dt = None
+                    contact_max_elev = 0.0
+
+        # Close any open window at the end of the search horizon
+        if in_contact and contact_start_dt is not None:
+            los_dt = now_dt + timedelta(seconds=total_steps * step_seconds)
+            duration_s = int((los_dt - contact_start_dt).total_seconds())
+            windows.append({
+                "station_name": gs_name,
+                "aos_utc": contact_start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "los_utc": los_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "max_elevation_deg": round(float(contact_max_elev), 1),
+                "duration_seconds": duration_s,
+            })
+
+    windows.sort(key=lambda w: w["aos_utc"])
+    return windows

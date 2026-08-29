@@ -104,6 +104,71 @@ app.get("/api/launches", async (req, res) => {
   }
 });
 
+app.post("/api/contact-windows", async (req, res) => {
+  try {
+    const { noradId, groundStations, durationHours } = req.body;
+    if (!noradId || !Array.isArray(groundStations) || groundStations.length === 0) {
+      return res.status(400).json({ error: "noradId (number) and groundStations (array) are required." });
+    }
+    res.json(
+      await callTool("get_contact_windows", {
+        norad_id: Number(noradId),
+        ground_stations: groundStations,
+        ...(durationHours !== undefined ? { duration_hours: Number(durationHours) } : {}),
+      })
+    );
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.get("/api/passes/:noradId", async (req, res) => {
+  try {
+    const norad_id = Number(req.params.noradId);
+    const lat = Number(req.query.lat);
+    const lon = Number(req.query.lon);
+    const alt_m = req.query.alt !== undefined ? Number(req.query.alt) : 0;
+    const days = req.query.days !== undefined ? Number(req.query.days) : 10;
+    const min_elevation_deg = req.query.min_elevation !== undefined ? Number(req.query.min_elevation) : 10;
+    if (!lat || !lon) return res.status(400).json({ error: "lat and lon query parameters are required." });
+    res.json(await callTool("get_satellite_passes", { norad_id, lat, lon, alt_m, days, min_elevation_deg }));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.get("/api/overhead", async (req, res) => {
+  try {
+    const lat = Number(req.query.lat);
+    const lon = Number(req.query.lon);
+    const alt_m = req.query.alt !== undefined ? Number(req.query.alt) : 0;
+    const search_radius_deg = req.query.radius !== undefined ? Number(req.query.radius) : 70;
+    const category_id = req.query.category !== undefined ? Number(req.query.category) : 0;
+    if (!lat || !lon) return res.status(400).json({ error: "lat and lon query parameters are required." });
+    res.json(await callTool("get_satellites_overhead", { lat, lon, alt_m, search_radius_deg, category_id }));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.get("/api/spacetrack/tle/:noradId", async (req, res) => {
+  try {
+    const norad_id = Number(req.params.noradId);
+    res.json(await callTool("get_spacetrack_tle", { norad_id }));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.get("/api/spacetrack/decay/:noradId", async (req, res) => {
+  try {
+    const norad_id = Number(req.params.noradId);
+    res.json(await callTool("get_spacetrack_decay", { norad_id }));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Live broadcast loop — pushes a constellation snapshot + AI analysis to all
 // connected clients on an interval. Analysis is heavier (calls Granite/local

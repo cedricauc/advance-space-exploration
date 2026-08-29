@@ -11,19 +11,31 @@ To keep this defensible in front of judges:
 | Data | Source | Real or simulated |
 |---|---|---|
 | Satellite position, altitude, speed | SGP4 propagation of live Celestrak TLEs | **Real** — verified against a real TLE in testing |
+| High-fidelity GP orbital elements | Space-Track.org basicspacedata API (requires free account) | **Real** — authoritative USSPACECOM source |
+| Reentry / decay prediction | Space-Track.org decay class | **Real** when prediction exists; returns `no_prediction` honestly when absent |
+| Ground-station contact windows | Pure SGP4 + Skyfield elevation scan over caller-supplied stations | **Real physics** — no external API |
 | Coverage radius | Line-of-sight spherical-Earth geometry from altitude | **Real physics**, not a made-up number |
 | TLE staleness / drag risk / orbit anomaly flag | Derived from real orbital elements (eccentricity, TLE epoch age, altitude) | **Real**, physically grounded |
 | Risk score & OK/DEGRADED/OUTAGE status | Deterministic function of the signals above | **Real computation**, transparent formula |
-| Plain-language explanation | Granite via watsonx.ai if configured, else a local template | **Real AI call** when watsonx credentials are set; **honest fallback** otherwise (never silently fabricated) |
-| Signal strength / latency / packet loss | — | **Not included** — no public API exposes real operator telemetry, so these were deliberately left out rather than faked |
+| Plain-language explanation | Granite via watsonx.ai if configured, else a local template | **Real AI call** when watsonx credentials are set; **honest fallback** otherwise |
+| Space weather — K-index | NOAA SWPC 1-min planetary K-index | **Real** |
+| Space weather — solar wind | NOAA SWPC real-time solar wind (speed + proton density) | **Real** |
+| Space weather — X-ray flux + flare class | NOAA GOES primary X-ray 1-day feed | **Real** |
+| Space weather — storm alerts | NOAA SWPC alert message feed, filtered for G/S storm classes | **Real** |
+| Satellite pass predictions | N2YO REST API (requires free API key) | **Real** when `N2YO_API_KEY` is set |
+| Satellites overhead | N2YO REST API /above endpoint | **Real** when `N2YO_API_KEY` is set |
+| Signal strength / latency / packet loss | — | **Not included** — no public API exposes real operator telemetry |
 
 ## Architecture
 
 ```
 mcp-server/          Python MCP server (real orbital mechanics + AI analysis)
   server.py            MCP tool definitions
-  satellite_utils.py   TLE fetch (Celestrak) + SGP4 propagation (Skyfield) + coverage geometry
+  satellite_utils.py   TLE fetch (Celestrak) + SGP4 propagation (Skyfield) + coverage geometry + contact windows
   ai_analysis.py       Risk scoring, status classification, Granite/watsonx integration
+  spacetrack.py        Space-Track.org GP elements, decay predictions, Skyfield re-propagation
+  space_weather.py     Enriched NOAA SWPC: K-index + solar wind + X-ray flux + storm alerts
+  n2yo.py              N2YO API: pass predictions + overhead satellite queries
 
 web-gateway/         Node.js Express + Socket.io (no React — Leaflet UI)
   server.js            REST endpoints + live broadcast loop, spawns the MCP server
@@ -38,13 +50,29 @@ web-gateway/         Node.js Express + Socket.io (no React — Leaflet UI)
 
 ## MCP Tools exposed
 
+### Orbital data (Celestrak + Skyfield)
 - `get_satellite_position(norad_id)` — real-time SGP4 position for one satellite
 - `get_constellation_snapshot(group, limit)` — positions for a whole Celestrak group (e.g. `starlink`, `stations`)
 - `get_coverage_zone(altitude_km, min_elevation_deg)` — real coverage radius from line-of-sight geometry
+- `get_contact_windows(norad_id, ground_stations, duration_hours)` — next contact windows for a list of ground stations (pure SGP4, no external API; `ground_stations` each need `name`, `lat`, `lon`, `min_elevation_deg`)
+
+### AI health analysis (watsonx)
 - `analyze_satellite(norad_id)` — full pipeline: position → health signals → AI risk/status/explanation
 - `analyze_constellation(group, limit)` — same, batched, for dashboards
-- `get_space_weather()` — NOAA SWPC planetary K-index
-- `get_iss_position()`, `get_astronauts_in_space()`, `get_launch_schedule()` — supporting public data
+
+### Space-Track (requires `SPACETRACK_USER` + `SPACETRACK_PASSWORD`)
+- `get_spacetrack_tle(norad_id)` — authoritative GP orbital elements + live Skyfield position
+- `get_spacetrack_decay(norad_id)` — reentry decay prediction (epoch, window, region)
+
+### Space weather (NOAA SWPC — no key required)
+- `get_space_weather()` — K-index, solar wind speed/density, GOES X-ray flux + flare class, active storm alerts
+
+### N2YO (requires `N2YO_API_KEY`)
+- `get_satellite_passes(norad_id, lat, lon, alt_m, days, min_elevation_deg)` — upcoming visible passes
+- `get_satellites_overhead(lat, lon, alt_m, search_radius_deg, category_id)` — satellites currently above horizon
+
+### Supporting public data
+- `get_iss_position()`, `get_astronauts_in_space()`, `get_launch_schedule()` — Open Notify + Launch Library
 
 ## AI & Data Intelligence Layer
 
@@ -65,11 +93,36 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Optional — enable real Granite explanations:
+### Environment variables
+
+All variables are optional — tools degrade gracefully with a clear message when credentials are absent.
+
 ```bash
-export WATSONX_API_KEY=your_key
-export WATSONX_URL=https://us-south.ml.cloud.ibm.com
-export WATSONX_PROJECT_ID=your_project_id
+# IBM watsonx.ai — enables real Granite AI explanations
+WATSONX_API_KEY=your_key
+WATSONX_URL=https://us-south.ml.cloud.ibm.com
+WATSONX_PROJECT_ID=your_project_id
+GRANITE_MODEL_ID=ibm/granite-13b-instruct-v2     # optional, this is the default
+
+# Space-Track.org — enables get_spacetrack_tle and get_spacetrack_decay
+# Free account: https://www.space-track.org/auth/createAccount
+SPACETRACK_USER=your_email@example.com
+SPACETRACK_PASSWORD=your_password
+
+# N2YO — enables get_satellite_passes and get_satellites_overhead
+# Free API key: https://www.n2yo.com/api/
+N2YO_API_KEY=your_n2yo_key
+
+# Celestrak (optional overrides — defaults are built in)
+CELESTRAK_GROUP_URL=...
+CELESTRAK_CATNR_URL=...
+CELESTRAK_CACHE_TTL_SECONDS=7200
+
+# NOAA SWPC (optional overrides — all endpoints are public, no key needed)
+NOAA_KINDEX_URL=...
+NOAA_SOLAR_WIND_URL=...
+NOAA_XRAY_URL=...
+NOAA_ALERTS_URL=...
 ```
 
 ### 2. Node.js gateway
@@ -89,8 +142,26 @@ Open http://localhost:3000 for the live map, http://localhost:3000/dashboard.htm
 - Full MCP wiring (Node spawns Python subprocess, calls tools, gets JSON back) confirmed working
 - Note: this sandbox's network policy blocks the specific space-data domains (Celestrak, Open Notify, NOAA SWPC, Launch Library). All code is written and tested for correctness; live external calls will succeed once run in an environment with normal internet access.
 
+## REST endpoints (web-gateway)
+
+| Method | Path | MCP tool called |
+|--------|------|-----------------|
+| GET | `/api/satellite/:noradId` | `get_satellite_position` |
+| GET | `/api/constellation?group=&limit=` | `get_constellation_snapshot` |
+| GET | `/api/coverage?altitude_km=&min_elevation_deg=` | `get_coverage_zone` |
+| GET | `/api/analyze/:noradId` | `analyze_satellite` |
+| GET | `/api/analyze-constellation?group=&limit=` | `analyze_constellation` |
+| GET | `/api/space-weather` | `get_space_weather` (enriched) |
+| GET | `/api/iss` | `get_iss_position` |
+| GET | `/api/astronauts` | `get_astronauts_in_space` |
+| GET | `/api/launches?limit=` | `get_launch_schedule` |
+| POST | `/api/contact-windows` | `get_contact_windows` — body: `{noradId, groundStations, durationHours?}` |
+| GET | `/api/spacetrack/tle/:noradId` | `get_spacetrack_tle` |
+| GET | `/api/spacetrack/decay/:noradId` | `get_spacetrack_decay` |
+| GET | `/api/passes/:noradId?lat=&lon=&alt=&days=&min_elevation=` | `get_satellite_passes` |
+| GET | `/api/overhead?lat=&lon=&alt=&radius=&category=` | `get_satellites_overhead` |
+
 ## Known limitations / next steps
 
 - `analyze_constellation` calls the AI analysis step once per satellite sequentially — fine for a demo-sized batch (8–20 satellites), would need batching/parallelization for a full constellation.
-- N2YO-based visibility/pass prediction (from the original API list) isn't implemented yet — would be a natural next MCP tool, requires a free N2YO API key.
 - Langflow scheduling isn't wired up in code; the MCP tools are ready to be called by a Langflow flow on a daily schedule.
