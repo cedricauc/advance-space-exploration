@@ -282,17 +282,30 @@ jobs:
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_STAGING }}
         run: |
           echo "🚀  Deploying to staging (Render service: $RENDER_SERVICE_ID)..."
-          HTTP_STATUS=$(curl -s -o /tmp/render_response.json -w "%{http_code}" -X POST \
-            "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
-            -H "Authorization: Bearer ${RENDER_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache": "do_not_clear"}')
-          echo "  Render API status: $HTTP_STATUS"
-          echo "  Render API response: $(cat /tmp/render_response.json)"
-          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
-            echo "❌  Render API returned HTTP $HTTP_STATUS"
-            exit 1
-          fi
+          for attempt in 1 2 3; do
+            HTTP_STATUS=$(curl -s -o /tmp/render_response.json -w "%{http_code}" -X POST \
+              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d '{"clearCache": "do_not_clear"}')
+            echo "  [attempt ${attempt}/3] Render API status: $HTTP_STATUS"
+            echo "  Render API response: $(cat /tmp/render_response.json)"
+            if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+              break
+            fi
+            if [ "$HTTP_STATUS" -ge 400 ] && [ "$HTTP_STATUS" -lt 500 ]; then
+              echo "❌  Render API returned HTTP $HTTP_STATUS (client error — not retrying)"
+              exit 1
+            fi
+            # 5xx — transient, retry after backoff
+            if [ "$attempt" -lt 3 ]; then
+              echo "  ⏳  Render 5xx — retrying in $((attempt * 10))s..."
+              sleep $((attempt * 10))
+            else
+              echo "❌  Render API returned HTTP $HTTP_STATUS after 3 attempts"
+              exit 1
+            fi
+          done
           DEPLOY_ID=$(python3 -c "import json; print(json.load(open('/tmp/render_response.json'))['deploy']['id'])")
           echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_ENV
           echo "  Deploy triggered: $DEPLOY_ID"
@@ -370,17 +383,30 @@ jobs:
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_PROD }}
         run: |
           echo "🚀  Deploying to production (Render service: $RENDER_SERVICE_ID)..."
-          HTTP_STATUS=$(curl -s -o /tmp/render_response.json -w "%{http_code}" -X POST \
-            "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
-            -H "Authorization: Bearer ${RENDER_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache": "do_not_clear"}')
-          echo "  Render API status: $HTTP_STATUS"
-          echo "  Render API response: $(cat /tmp/render_response.json)"
-          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
-            echo "❌  Render API returned HTTP $HTTP_STATUS"
-            exit 1
-          fi
+          for attempt in 1 2 3; do
+            HTTP_STATUS=$(curl -s -o /tmp/render_response.json -w "%{http_code}" -X POST \
+              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d '{"clearCache": "do_not_clear"}')
+            echo "  [attempt ${attempt}/3] Render API status: $HTTP_STATUS"
+            echo "  Render API response: $(cat /tmp/render_response.json)"
+            if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+              break
+            fi
+            if [ "$HTTP_STATUS" -ge 400 ] && [ "$HTTP_STATUS" -lt 500 ]; then
+              echo "❌  Render API returned HTTP $HTTP_STATUS (client error — not retrying)"
+              exit 1
+            fi
+            # 5xx — transient, retry after backoff
+            if [ "$attempt" -lt 3 ]; then
+              echo "  ⏳  Render 5xx — retrying in $((attempt * 10))s..."
+              sleep $((attempt * 10))
+            else
+              echo "❌  Render API returned HTTP $HTTP_STATUS after 3 attempts"
+              exit 1
+            fi
+          done
           DEPLOY_ID=$(python3 -c "import json; print(json.load(open('/tmp/render_response.json'))['deploy']['id'])")
           echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_ENV
           echo "  Deploy triggered: $DEPLOY_ID"
