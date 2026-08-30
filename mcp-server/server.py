@@ -66,7 +66,7 @@ async def get_constellation_snapshot(group: str = "starlink", limit: int = 20) -
             "group": group,
             "count": 0,
             "satellites": [],
-            "error": f"Failed to fetch TLE group '{group}' from Celestrak: {exc}",
+            "error": f"Failed to fetch TLE group '{group}' from Celestrak: {type(exc).__name__}: {exc}",
         }
     positions = [sat.propagate(t) for t in tles]
     return {"group": group, "count": len(positions), "satellites": positions}
@@ -145,7 +145,7 @@ async def analyze_constellation(group: str = "starlink", limit: int = 10) -> dic
             "group": group,
             "count": 0,
             "satellites": [],
-            "errors": [f"Failed to fetch TLE group '{group}' from Celestrak: {exc}"],
+            "errors": [f"Failed to fetch TLE group '{group}' from Celestrak: {type(exc).__name__}: {exc}"],
         }
 
     results = []
