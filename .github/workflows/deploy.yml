@@ -77,7 +77,7 @@ jobs:
       - name: Check imports resolve (catches missing httpx etc.)
         run: |
           python -c "
-          import sys, importlib
+          import sys, importlib, importlib.util
           modules = ['satellite_utils', 'ai_analysis', 'spacetrack', 'space_weather', 'n2yo']
           ok = True
           for m in modules:
