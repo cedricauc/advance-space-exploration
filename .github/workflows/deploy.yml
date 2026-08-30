@@ -360,7 +360,7 @@ jobs:
               exit 1
             fi
           done
-          DEPLOY_ID=$(python3 -c "import json; print(json.load(open('/tmp/render_response.json'))['deploy']['id'])")
+          DEPLOY_ID=$(python3 -c "import json; print(json.load(open('/tmp/render_response.json'))['id'])")
           echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_ENV
           echo "  Deploy triggered: $DEPLOY_ID"
 
@@ -497,7 +497,7 @@ jobs:
               exit 1
             fi
           done
-          DEPLOY_ID=$(python3 -c "import json; print(json.load(open('/tmp/render_response.json'))['deploy']['id'])")
+          DEPLOY_ID=$(python3 -c "import json; print(json.load(open('/tmp/render_response.json'))['id'])")
           echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_ENV
           echo "  Deploy triggered: $DEPLOY_ID"
 
