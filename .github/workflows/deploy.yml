@@ -268,23 +268,63 @@ jobs:
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_STAGING }}
         run: |
           missing=()
-          [ -z "$RENDER_API_KEY" ]      && missing+=("RENDER_API_KEY")
-          [ -z "$RENDER_SERVICE_ID" ]   && missing+=("RENDER_SERVICE_ID_STAGING")
+          [ -z "$RENDER_API_KEY" ]    && missing+=("RENDER_API_KEY")
+          [ -z "$RENDER_SERVICE_ID" ] && missing+=("RENDER_SERVICE_ID_STAGING")
           if [ ${#missing[@]} -gt 0 ]; then
             echo "❌  Missing GitHub secrets: ${missing[*]}"
             echo "    Add them at: Settings → Secrets and variables → Actions"
             exit 1
           fi
 
-      - name: Trigger Render staging deploy
+      - name: Resolve Render staging service ID
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_STAGING }}
         run: |
-          echo "🚀  Deploying to staging (Render service: $RENDER_SERVICE_ID)..."
+          # If the secret already looks like a proper srv- ID, use it directly.
+          # Otherwise treat it as a service name and resolve via the API.
+          if [[ "$RENDER_SERVICE_ID" == srv-* ]]; then
+            echo "  ✅  Using service ID from secret: $RENDER_SERVICE_ID"
+            echo "RESOLVED_SERVICE_ID=$RENDER_SERVICE_ID" >> $GITHUB_ENV
+          else
+            echo "  Secret looks like a name, not an ID — resolving via Render API..."
+            HTTP_STATUS=$(curl -s -o /tmp/render_services.json -w "%{http_code}" \
+              "https://api.render.com/v1/services?name=${RENDER_SERVICE_ID}&limit=5" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}")
+            echo "  Services lookup HTTP $HTTP_STATUS: $(cat /tmp/render_services.json)"
+            if [ "$HTTP_STATUS" -ne 200 ]; then
+              echo "❌  Render services lookup failed (HTTP $HTTP_STATUS)"
+              exit 1
+            fi
+            SVC_ID=$(python3 -c "
+          import json, sys
+          data = json.load(open('/tmp/render_services.json'))
+          name = '${RENDER_SERVICE_ID}'
+          for item in data:
+            svc = item.get('service', item)
+            if svc.get('name') == name:
+              print(svc['id'])
+              sys.exit(0)
+          print('NOT_FOUND')
+            ")
+            if [ "$SVC_ID" = "NOT_FOUND" ]; then
+              echo "❌  No service named '${RENDER_SERVICE_ID}' found in your Render account."
+              echo "    Available services:"
+              python3 -c "import json; [print('   ', i.get('service',i).get('name'), '-', i.get('service',i).get('id')) for i in json.load(open('/tmp/render_services.json'))]"
+              exit 1
+            fi
+            echo "  ✅  Resolved '$RENDER_SERVICE_ID' → $SVC_ID"
+            echo "RESOLVED_SERVICE_ID=$SVC_ID" >> $GITHUB_ENV
+          fi
+
+      - name: Trigger Render staging deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          echo "🚀  Deploying to staging (Render service: $RESOLVED_SERVICE_ID)..."
           for attempt in 1 2 3; do
             HTTP_STATUS=$(curl -s -o /tmp/render_response.json -w "%{http_code}" -X POST \
-              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+              "https://api.render.com/v1/services/${RESOLVED_SERVICE_ID}/deploys" \
               -H "Authorization: Bearer ${RENDER_API_KEY}" \
               -H "Content-Type: application/json" \
               -d '{"clearCache": "do_not_clear"}')
@@ -297,7 +337,6 @@ jobs:
               echo "❌  Render API returned HTTP $HTTP_STATUS (client error — not retrying)"
               exit 1
             fi
-            # 5xx — transient, retry after backoff
             if [ "$attempt" -lt 3 ]; then
               echo "  ⏳  Render 5xx — retrying in $((attempt * 10))s..."
               sleep $((attempt * 10))
@@ -313,13 +352,12 @@ jobs:
       - name: Wait for deploy to complete
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_STAGING }}
         run: |
           echo "⏳  Waiting for staging deploy to complete..."
           for i in $(seq 1 30); do
             sleep 10
             STATUS=$(curl -s --fail-with-body \
-              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys/${DEPLOY_ID}" \
+              "https://api.render.com/v1/services/${RESOLVED_SERVICE_ID}/deploys/${DEPLOY_ID}" \
               -H "Authorization: Bearer ${RENDER_API_KEY}" \
               | python3 -c "import sys,json; print(json.load(sys.stdin)['deploy']['status'])")
             echo "  [${i}/30] status: $STATUS"
@@ -369,23 +407,61 @@ jobs:
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_PROD }}
         run: |
           missing=()
-          [ -z "$RENDER_API_KEY" ]      && missing+=("RENDER_API_KEY")
-          [ -z "$RENDER_SERVICE_ID" ]   && missing+=("RENDER_SERVICE_ID_PROD")
+          [ -z "$RENDER_API_KEY" ]    && missing+=("RENDER_API_KEY")
+          [ -z "$RENDER_SERVICE_ID" ] && missing+=("RENDER_SERVICE_ID_PROD")
           if [ ${#missing[@]} -gt 0 ]; then
             echo "❌  Missing GitHub secrets: ${missing[*]}"
             echo "    Add them at: Settings → Secrets and variables → Actions"
             exit 1
           fi
 
-      - name: Trigger Render production deploy
+      - name: Resolve Render production service ID
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_PROD }}
         run: |
-          echo "🚀  Deploying to production (Render service: $RENDER_SERVICE_ID)..."
+          if [[ "$RENDER_SERVICE_ID" == srv-* ]]; then
+            echo "  ✅  Using service ID from secret: $RENDER_SERVICE_ID"
+            echo "RESOLVED_SERVICE_ID=$RENDER_SERVICE_ID" >> $GITHUB_ENV
+          else
+            echo "  Secret looks like a name, not an ID — resolving via Render API..."
+            HTTP_STATUS=$(curl -s -o /tmp/render_services.json -w "%{http_code}" \
+              "https://api.render.com/v1/services?name=${RENDER_SERVICE_ID}&limit=5" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}")
+            echo "  Services lookup HTTP $HTTP_STATUS: $(cat /tmp/render_services.json)"
+            if [ "$HTTP_STATUS" -ne 200 ]; then
+              echo "❌  Render services lookup failed (HTTP $HTTP_STATUS)"
+              exit 1
+            fi
+            SVC_ID=$(python3 -c "
+          import json, sys
+          data = json.load(open('/tmp/render_services.json'))
+          name = '${RENDER_SERVICE_ID}'
+          for item in data:
+            svc = item.get('service', item)
+            if svc.get('name') == name:
+              print(svc['id'])
+              sys.exit(0)
+          print('NOT_FOUND')
+            ")
+            if [ "$SVC_ID" = "NOT_FOUND" ]; then
+              echo "❌  No service named '${RENDER_SERVICE_ID}' found in your Render account."
+              echo "    Available services:"
+              python3 -c "import json; [print('   ', i.get('service',i).get('name'), '-', i.get('service',i).get('id')) for i in json.load(open('/tmp/render_services.json'))]"
+              exit 1
+            fi
+            echo "  ✅  Resolved '$RENDER_SERVICE_ID' → $SVC_ID"
+            echo "RESOLVED_SERVICE_ID=$SVC_ID" >> $GITHUB_ENV
+          fi
+
+      - name: Trigger Render production deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          echo "🚀  Deploying to production (Render service: $RESOLVED_SERVICE_ID)..."
           for attempt in 1 2 3; do
             HTTP_STATUS=$(curl -s -o /tmp/render_response.json -w "%{http_code}" -X POST \
-              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+              "https://api.render.com/v1/services/${RESOLVED_SERVICE_ID}/deploys" \
               -H "Authorization: Bearer ${RENDER_API_KEY}" \
               -H "Content-Type: application/json" \
               -d '{"clearCache": "do_not_clear"}')
@@ -398,7 +474,6 @@ jobs:
               echo "❌  Render API returned HTTP $HTTP_STATUS (client error — not retrying)"
               exit 1
             fi
-            # 5xx — transient, retry after backoff
             if [ "$attempt" -lt 3 ]; then
               echo "  ⏳  Render 5xx — retrying in $((attempt * 10))s..."
               sleep $((attempt * 10))
@@ -414,13 +489,12 @@ jobs:
       - name: Wait for deploy to complete
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_PROD }}
         run: |
           echo "⏳  Waiting for production deploy to complete..."
           for i in $(seq 1 30); do
             sleep 10
             STATUS=$(curl -s --fail-with-body \
-              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys/${DEPLOY_ID}" \
+              "https://api.render.com/v1/services/${RESOLVED_SERVICE_ID}/deploys/${DEPLOY_ID}" \
               -H "Authorization: Bearer ${RENDER_API_KEY}" \
               | python3 -c "import sys,json; print(json.load(sys.stdin)['deploy']['status'])")
             echo "  [${i}/30] status: $STATUS"
