@@ -6,7 +6,6 @@
   <title>3D Satellite Tracking — Space Mission Intelligence</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛰️</text></svg>" />
   <link rel="stylesheet" href="/css/style.css" />
-
   <!--
     Import map: resolves the bare "three" specifier used internally by
     OrbitControls.js (a three.js addon that does `import {...} from 'three'`,
@@ -25,15 +24,19 @@
   </script>
 </head>
 <body>
-  <header>
+<header>
+  <div class="header-left">
     <h1>🛰️ Space Mission Intelligence</h1>
-    <nav>
-      <a href="/" class="active">Live 3D Tracking</a>
-      <a href="/dashboard.html">Dashboard</a>
-    </nav>
-    <span id="status-pill">connecting…</span>
-  </header>
+    <div class="subtitle">TechXchange Dev.</div>
+  </div>
 
+  <nav>
+    <a href="/" class="active">Live 3D Tracking</a>
+    <a href="/dashboard.html">Dashboard</a>
+  </nav>
+
+  <span id="status-pill">connecting…</span>
+</header>
   <div class="panel controls-panel map-controls">
     <div class="controls-row">
       <label>
@@ -61,16 +64,13 @@
       <button id="applyBtn">Apply</button>
     </div>
   </div>
-
   <div class="globe3d-layout">
     <div id="globe3dContainer"></div>
-
     <aside id="infoPanel" class="info-panel hidden">
       <button id="infoPanelClose" class="info-panel-close" aria-label="Close">×</button>
       <div id="infoPanelContent"></div>
     </aside>
   </div>
-
   <script type="module" src="/js/Globe3d.js"></script>
 </body>
 </html>
