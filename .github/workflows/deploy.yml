@@ -223,7 +223,7 @@ jobs:
           d = json.load(sys.stdin)
           assert 'coverage_radius_km' in d, f'Bad coverage response: {d}'
           r = d['coverage_radius_km']
-          assert 2000 < r < 4000, f'Coverage radius {r} km outside expected range for 550 km orbit'
+          assert 1500 < r < 2000, f'Coverage radius {r} km outside expected range for 550 km orbit'
           print(f'  ✅  Coverage at 550 km: radius={r} km (physics check passed)')
           "
 
