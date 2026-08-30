@@ -134,22 +134,38 @@ async def analyze_constellation(group: str = "starlink", limit: int = 10) -> dic
     (e.g. when the user clicks it) to get the full AI-generated explanation
     on demand.
 
+    TLE source: tries Celestrak first. If fails falls back to a Space-Track 
+    name-search approximation of the group, when SPACETRACK_USER/SPACETRACK_PASSWORD
+    are configured. Only groups listed in spacetrack._GROUP_NAME_PATTERNS
+    support this fallback;
+
     Args:
-        group: Celestrak group name
+        group: Celestrak group name, e.g. 'starlink', 'stations', 'galileo', 'gps-ops'
         limit: max satellites to analyze
     """
+    errors = []
+    tles = None
     try:
         tles = await sat.fetch_tle_group(group, limit)
     except Exception as exc:
-        return {
-            "group": group,
-            "count": 0,
-            "satellites": [],
-            "errors": [f"Failed to fetch TLE group '{group}' from Celestrak: {type(exc).__name__}: {exc}"],
-        }
+        errors.append(f"Celestrak fetch failed for '{group}': {type(exc).__name__}: {exc}")
+
+        # Fall back to Space-Track if credentials are configured. This is a
+        # different network path than Celestrak, so it survives Celestrak-side
+        # blocking/throttling of the host's outbound IP range.
+        if SPACETRACK_USER and SPACETRACK_PASSWORD:
+            try:
+                tles = await spacetrack.fetch_group_tle(group, limit)
+                errors.append(f"Recovered via Space-Track fallback for '{group}'.")
+            except Exception as st_exc:
+                errors.append(f"Space-Track fallback also failed for '{group}': {type(st_exc).__name__}: {st_exc}")
+        else:
+            errors.append("Space-Track fallback skipped: SPACETRACK_USER/SPACETRACK_PASSWORD not configured.")
+
+    if tles is None:
+        return {"group": group, "count": 0, "satellites": [], "errors": errors}
 
     results = []
-    errors = []
     for t in tles:
         try:
             position = sat.propagate(t)

@@ -33,12 +33,22 @@ SPACETRACK_BASE = os.environ.get("SPACETRACK_BASE", "https://www.space-track.org
 SPACETRACK_USER = os.environ.get("SPACETRACK_USER", "")
 SPACETRACK_PASSWORD = os.environ.get("SPACETRACK_PASSWORD", "")
 
+# Maps Celestrak-style group names to a Space-Track OBJECT_NAME search pattern.
+# Space-Track has no "group" endpoint like Celestrak — this approximates it
+# via a name-based query, so results may differ slightly from Celestrak's
+# curated group membership.
+_GROUP_NAME_PATTERNS = {
+    "galileo": "GALILEO",
+    "starlink": "STARLINK",
+    "gps-ops": "NAVSTAR",
+    "stations": "ISS (ZARYA)",  # narrow on purpose — "stations" has no clean name pattern
+}
+
 # Session cookie cache: {"cookie": str, "cached_at": float}
 _session_cache: dict = {}
 _SESSION_TTL_SECONDS = 6 * 60 * 60  # 6 hours
 
 _ts = load.timescale()
-
 
 # ---------------------------------------------------------------------------
 # Session authentication
@@ -139,6 +149,29 @@ async def fetch_decay_prediction(norad_id: int) -> Optional[dict]:
     if not data:
         return None
     return data[0]
+
+
+async def fetch_group_tle(group: str, limit: int = 20) -> list[dict]:
+    """Approximate Celestrak's fetch_tle_group() using a Space-Track name search.
+
+    Returns the same [{"name", "line1", "line2"}, ...] shape as
+    satellite_utils.fetch_tle_group() so callers don't need to branch on source.
+    """
+    pattern = _GROUP_NAME_PATTERNS.get(group.lower())
+    if not pattern:
+        raise ValueError(f"No Space-Track name pattern configured for group '{group}'")
+
+    path = (
+        f"/basicspacedata/query/class/gp"
+        f"/OBJECT_NAME/~~{pattern}"
+        f"/orderby/NORAD_CAT_ID/limit/{limit}/format/json"
+    )
+    data = await _st_get(path)
+    return [
+        {"name": r.get("OBJECT_NAME", "UNKNOWN").strip(), "line1": r["TLE_LINE1"], "line2": r["TLE_LINE2"]}
+        for r in data
+        if r.get("TLE_LINE1") and r.get("TLE_LINE2")
+    ]
 
 
 # ---------------------------------------------------------------------------
