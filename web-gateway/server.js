@@ -14,6 +14,15 @@ const io = new Server(httpServer);
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
 
+// Disable ETag/conditional-caching for API responses — this data is live and
+// time-sensitive, and Express's default ETag behavior can cause Firefox to
+// throw a bare NetworkError on 304 responses when no matching disk cache exists.
+app.set("etag", false);
+app.use("/api", (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
+
 // ---------------------------------------------------------------------------
 // REST endpoints — thin wrappers around MCP tool calls
 // ---------------------------------------------------------------------------
