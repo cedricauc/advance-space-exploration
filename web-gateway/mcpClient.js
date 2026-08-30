@@ -1,25 +1,26 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_SCRIPT = path.resolve(__dirname, "../mcp-server/server.py");
 
-// --- Automatic Python venv detection for Windows ---
+// --- Automatic Python command resolution ---
 // Priority:
-// 1. PYTHON_COMMAND env var
-// 2. Local venv python.exe
-// 3. System python
-const DEFAULT_VENV_PYTHON = path.resolve(
-  __dirname,
-  "../mcp-server/venv/Scripts/python.exe"
-);
+// 1. PYTHON_COMMAND env var  (set to "python3" in render.yaml for Render/Linux)
+// 2. Local venv python.exe   (Windows dev machines with a local venv)
+// 3. "python" on Windows / "python3" everywhere else (system-wide fallback)
+const VENV_PYTHON = path.resolve(__dirname, "../mcp-server/venv/Scripts/python.exe");
 
-// "python3" isn't a registered command on most Windows installs (only
-// "python" is, especially inside a venv). Allow overriding via env var,
-// default to "python" on Windows and "python3" everywhere else.
-const PYTHON_COMMAND = process.env.PYTHON_COMMAND || DEFAULT_VENV_PYTHON || (process.platform === "win32" ? "python" : "python3");
+// Only use the venv path when the executable actually exists on disk.
+// On Render (Linux) the Windows venv is never present, so DEFAULT_VENV_PYTHON
+// must NOT be used there — otherwise PYTHON_COMMAND env var is silently ignored.
+const PYTHON_COMMAND =
+  process.env.PYTHON_COMMAND ||
+  (existsSync(VENV_PYTHON) ? VENV_PYTHON : null) ||
+  (process.platform === "win32" ? "python" : "python3");
 
 let client = null;
 let connecting = null;
@@ -34,7 +35,6 @@ async function getClient() {
     // without a virtual environment. Locally, the venv handles this automatically.
     const extraEnv = {};
     const venvPackages = path.resolve(__dirname, "../mcp-server/venv-packages");
-    const { existsSync } = await import("node:fs");
     if (existsSync(venvPackages)) {
       const existing = process.env.PYTHONPATH || "";
       extraEnv.PYTHONPATH = existing ? `${venvPackages}:${existing}` : venvPackages;

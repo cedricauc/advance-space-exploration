@@ -22,3 +22,5 @@ mcp-server/venv-packages/
 # OS
 .DS_Store
 Thumbs.db
+
+.bob
