@@ -262,13 +262,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check required secrets
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_STAGING }}
+        run: |
+          missing=()
+          [ -z "$RENDER_API_KEY" ]      && missing+=("RENDER_API_KEY")
+          [ -z "$RENDER_SERVICE_ID" ]   && missing+=("RENDER_SERVICE_ID_STAGING")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "❌  Missing GitHub secrets: ${missing[*]}"
+            echo "    Add them at: Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+
       - name: Trigger Render staging deploy
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_STAGING }}
         run: |
           echo "🚀  Deploying to staging (Render service: $RENDER_SERVICE_ID)..."
-          DEPLOY_RESPONSE=$(curl -sf -X POST \
+          DEPLOY_RESPONSE=$(curl -s --fail-with-body -X POST \
             "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
             -H "Authorization: Bearer ${RENDER_API_KEY}" \
             -H "Content-Type: application/json" \
@@ -285,7 +299,7 @@ jobs:
           echo "⏳  Waiting for staging deploy to complete..."
           for i in $(seq 1 30); do
             sleep 10
-            STATUS=$(curl -sf \
+            STATUS=$(curl -s --fail-with-body \
               "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys/${DEPLOY_ID}" \
               -H "Authorization: Bearer ${RENDER_API_KEY}" \
               | python3 -c "import sys,json; print(json.load(sys.stdin)['deploy']['status'])")
@@ -330,13 +344,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check required secrets
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_PROD }}
+        run: |
+          missing=()
+          [ -z "$RENDER_API_KEY" ]      && missing+=("RENDER_API_KEY")
+          [ -z "$RENDER_SERVICE_ID" ]   && missing+=("RENDER_SERVICE_ID_PROD")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "❌  Missing GitHub secrets: ${missing[*]}"
+            echo "    Add them at: Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+
       - name: Trigger Render production deploy
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID_PROD }}
         run: |
           echo "🚀  Deploying to production (Render service: $RENDER_SERVICE_ID)..."
-          DEPLOY_RESPONSE=$(curl -sf -X POST \
+          DEPLOY_RESPONSE=$(curl -s --fail-with-body -X POST \
             "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
             -H "Authorization: Bearer ${RENDER_API_KEY}" \
             -H "Content-Type: application/json" \
@@ -353,7 +381,7 @@ jobs:
           echo "⏳  Waiting for production deploy to complete..."
           for i in $(seq 1 30); do
             sleep 10
-            STATUS=$(curl -sf \
+            STATUS=$(curl -s --fail-with-body \
               "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys/${DEPLOY_ID}" \
               -H "Authorization: Bearer ${RENDER_API_KEY}" \
               | python3 -c "import sys,json; print(json.load(sys.stdin)['deploy']['status'])")
