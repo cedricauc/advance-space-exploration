@@ -178,9 +178,10 @@ app.get("/api/spacetrack/decay/:noradId", async (req, res) => {
   }
 });
 
+//Temporary debug endpoint
 app.get("/api/debug-celestrak", async (req, res) => {
   try {
-    const result = await callTool("analyze_constellation", { group: "galileo", limit: 1 }, 20000);
+    const result = await callTool("debug_celestrak_connectivity", {}, 15000);
     res.json(result);
   } catch (err) {
     res.status(502).json({ error: err.message });
