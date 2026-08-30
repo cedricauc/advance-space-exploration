@@ -18,6 +18,8 @@ from typing import Any
 
 import httpx
 from skyfield.api import EarthSatellite, Topos, load
+
+import socket
  
 EARTH_RADIUS_KM = 6371.0
 
@@ -281,3 +283,22 @@ async def compute_contact_windows(
 
     windows.sort(key=lambda w: w["aos_utc"])
     return windows
+
+
+async def debug_celestrak_connectivity() -> dict:
+    host = "celestrak.org"
+    result = {"host": host}
+    try:
+        result["dns"] = socket.gethostbyname(host)
+    except Exception as e:
+        result["dns_error"] = f"{type(e).__name__}: {e}"
+        return result
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"https://{host}/NORAD/elements/gp.php?GROUP=galileo&FORMAT=tle")
+            result["status_code"] = resp.status_code
+            result["bytes_received"] = len(resp.content)
+    except Exception as e:
+        result["connect_error"] = f"{type(e).__name__}: {e}"
+    return result

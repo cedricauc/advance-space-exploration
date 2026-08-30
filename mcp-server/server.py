@@ -394,5 +394,26 @@ async def get_launch_schedule(limit: int = 5) -> dict:
     return {"count": len(launches), "launches": launches}
 
 
+@mcp.tool()
+async def debug_celestrak_connectivity() -> dict:
+    """Diagnostic: tests DNS resolution and HTTPS connectivity to Celestrak."""
+    import socket
+    host = "celestrak.org"
+    result = {"host": host}
+    try:
+        result["dns"] = socket.gethostbyname(host)
+    except Exception as e:
+        result["dns_error"] = f"{type(e).__name__}: {e}"
+        return result
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"https://{host}/NORAD/elements/gp.php?GROUP=galileo&FORMAT=tle")
+            result["status_code"] = resp.status_code
+            result["bytes_received"] = len(resp.content)
+    except Exception as e:
+        result["connect_error"] = f"{type(e).__name__}: {e}"
+    return result
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

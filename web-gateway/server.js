@@ -178,6 +178,15 @@ app.get("/api/spacetrack/decay/:noradId", async (req, res) => {
   }
 });
 
+app.get("/api/debug-celestrak", async (req, res) => {
+  try {
+    const result = await callTool("analyze_constellation", { group: "galileo", limit: 1 }, 20000);
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Live broadcast loop — pushes a constellation snapshot + AI analysis to all
 // connected clients on an interval. Analysis is heavier (calls Granite/local
