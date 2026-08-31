@@ -2,29 +2,27 @@
 
 **Predictive spacecraft monitoring, anomaly detection, and satellite data analysis.**
 
-An AI‑powered system for real‑time satellite mapping, coverage analysis, and space‑data intelligence — built and verified end-to-end.
+An AI‑powered system for real‑time satellite mapping, coverage analysis, and space‑data intelligence.
 
-## What's real vs. what's the AI layer
+## Data Source
 
-To keep this defensible in front of judges:
+| Data | Source |
+|---|---|
+| Satellite position, altitude, speed | SGP4 propagation of live Celestrak TLEs |
+| High-fidelity GP orbital elements | Space-Track.org basicspacedata API (requires free account) |
+| Reentry / decay prediction | Space-Track.org decay class |
+| Ground-station contact windows | Pure SGP4 + Skyfield elevation scan over caller-supplied stations |
+| Coverage radius | Line-of-sight spherical-Earth geometry from altitude | 
+| TLE staleness / drag risk / orbit anomaly flag | Derived from real orbital elements (eccentricity, TLE epoch age, altitude) |
+| Risk score & OK/DEGRADED/OUTAGE status | Deterministic function of the signals above | 
+| Plain-language explanation | Granite via watsonx.ai if configured, else a local template |
+| Space weather — K-index | NOAA SWPC 1-min planetary K-index |
+| Space weather — solar wind | NOAA SWPC real-time solar wind (speed + proton density) |
+| Space weather — X-ray flux + flare class | NOAA GOES primary X-ray 1-day feed | 
+| Space weather — storm alerts | NOAA SWPC alert message feed, filtered for G/S storm classes |
+| Satellite pass predictions | N2YO REST API (requires free API key) |
+| Satellites overhead | N2YO REST API /above endpoint | 
 
-| Data | Source | Real or simulated |
-|---|---|---|
-| Satellite position, altitude, speed | SGP4 propagation of live Celestrak TLEs | **Real** — verified against a real TLE in testing |
-| High-fidelity GP orbital elements | Space-Track.org basicspacedata API (requires free account) | **Real** — authoritative USSPACECOM source |
-| Reentry / decay prediction | Space-Track.org decay class | **Real** when prediction exists; returns `no_prediction` honestly when absent |
-| Ground-station contact windows | Pure SGP4 + Skyfield elevation scan over caller-supplied stations | **Real physics** — no external API |
-| Coverage radius | Line-of-sight spherical-Earth geometry from altitude | **Real physics**, not a made-up number |
-| TLE staleness / drag risk / orbit anomaly flag | Derived from real orbital elements (eccentricity, TLE epoch age, altitude) | **Real**, physically grounded |
-| Risk score & OK/DEGRADED/OUTAGE status | Deterministic function of the signals above | **Real computation**, transparent formula |
-| Plain-language explanation | Granite via watsonx.ai if configured, else a local template | **Real AI call** when watsonx credentials are set; **honest fallback** otherwise |
-| Space weather — K-index | NOAA SWPC 1-min planetary K-index | **Real** |
-| Space weather — solar wind | NOAA SWPC real-time solar wind (speed + proton density) | **Real** |
-| Space weather — X-ray flux + flare class | NOAA GOES primary X-ray 1-day feed | **Real** |
-| Space weather — storm alerts | NOAA SWPC alert message feed, filtered for G/S storm classes | **Real** |
-| Satellite pass predictions | N2YO REST API (requires free API key) | **Real** when `N2YO_API_KEY` is set |
-| Satellites overhead | N2YO REST API /above endpoint | **Real** when `N2YO_API_KEY` is set |
-| Signal strength / latency / packet loss | — | **Not included** — no public API exposes real operator telemetry |
 
 ## Architecture
 
@@ -80,8 +78,6 @@ web-gateway/         Node.js Express + Socket.io (no React — Leaflet UI)
 
 **IBM Granite / watsonx.ai** — `ai_analysis.py` calls a hosted Granite model via the watsonx.ai REST API to turn structured signals into a plain-language status explanation, when `WATSONX_API_KEY`, `WATSONX_URL`, and `WATSONX_PROJECT_ID` are set. Without credentials, the system falls back to a transparent local template so it still runs end-to-end — and says so in the output rather than pretending the explanation came from Granite.
 
-**Langflow** — intended orchestration layer for scheduled ingestion (not included in this build, since it's a visual tool configured outside the codebase); would call the same MCP tools on a schedule and feed the daily dashboard.
-
 ## Setup
 
 ### 1. Python MCP server
@@ -94,8 +90,6 @@ pip install -r requirements.txt
 ```
 
 ### Environment variables
-
-All variables are optional — tools degrade gracefully with a clear message when credentials are absent.
 
 ```bash
 # IBM watsonx.ai — enables real Granite AI explanations
@@ -167,16 +161,11 @@ Push to `main` runs the same pipeline then deploys to **production**.
 **1. Connect repo to Render**
 - Go to https://dashboard.render.com → New Web Service → connect your GitHub repo
 - Render auto-detects `render.yaml` and creates two services: `space-explorer-staging` and `space-explorer-production`
-- Set environment variables in the Render dashboard (see `.env.example` for the full list)
 
-**2. Add GitHub Secrets**
-Go to GitHub → Settings → Secrets and variables → Actions, and add:
+**2. Set Environment**
 
-| Secret | Where to get it |
+| Key | Value |
 |--------|----------------|
-| `RENDER_API_KEY` | Render dashboard → Account → API Keys |
-| `RENDER_SERVICE_ID_STAGING` | Render dashboard → service → Settings → Service ID |
-| `RENDER_SERVICE_ID_PROD` | Render dashboard → production service → Settings → Service ID |
 | `WATSONX_API_KEY` | IBM Cloud |
 | `WATSONX_URL` | IBM Cloud |
 | `WATSONX_PROJECT_ID` | IBM Cloud |
@@ -191,30 +180,6 @@ Go to GitHub → Settings → Secrets and variables → Actions, and add:
 | `main` | validate + smoke-test | Production |
 | `fix/*`, `chore/*` | validate + smoke-test | None (PR to main) |
 | `pull_request → main` | validate + smoke-test | None |
-
-### Bob workflow automation
-
-This project includes Bob skills that automate the entire release workflow:
-
-**`/space-release`** — Full release pipeline inside Bob:
-1. Reads git history and classifies every changed file (document understanding)
-2. Spawns parallel subagents to validate Python and Node.js simultaneously
-3. Drafts a conventional commit message from the change analysis
-4. Stages, commits, and pushes with your approval
-5. Confirms the GitHub Actions run is triggered
-6. Reports staging/production deploy status
-
-**`/space-onboard`** — New developer setup:
-1. Runs automated health check (Python, Node, venv, packages, .env, port)
-2. Walks through credential configuration
-3. Validates the running server against live endpoints
-
-## Verified during build
-
-- SGP4 propagation tested against a real-format TLE — confirmed correct lat/lon/altitude output
-- Coverage geometry confirmed to return a physically sane radius (~1,600 km at 550 km altitude, 10° min elevation)
-- Full MCP wiring (Node spawns Python subprocess, calls tools, gets JSON back) confirmed working
-- Note: this sandbox's network policy blocks the specific space-data domains (Celestrak, Open Notify, NOAA SWPC, Launch Library). All code is written and tested for correctness; live external calls will succeed once run in an environment with normal internet access.
 
 ## REST endpoints (web-gateway)
 
@@ -235,7 +200,3 @@ This project includes Bob skills that automate the entire release workflow:
 | GET | `/api/passes/:noradId?lat=&lon=&alt=&days=&min_elevation=` | `get_satellite_passes` |
 | GET | `/api/overhead?lat=&lon=&alt=&radius=&category=` | `get_satellites_overhead` |
 
-## Known limitations / next steps
-
-- `analyze_constellation` calls the AI analysis step once per satellite sequentially — fine for a demo-sized batch (8–20 satellites), would need batching/parallelization for a full constellation.
-- Langflow scheduling isn't wired up in code; the MCP tools are ready to be called by a Langflow flow on a daily schedule.
